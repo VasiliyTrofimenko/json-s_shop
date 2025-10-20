@@ -1,3 +1,4 @@
 rustup-init.exe
 \__pycache__
 .venv
+cookie.txt

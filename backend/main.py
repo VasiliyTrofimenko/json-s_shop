@@ -20,27 +20,67 @@ os.makedirs("backend/static/uploads", exist_ok=True)
 
 Base.metadata.create_all(bind=engine)
 
-# Ensure there is an initial admin user
+SESSION_COOKIE = "session"
+
+
+def _hash_password(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def _verify_password(pw: str, pw_hash: str) -> bool:
+    try:
+        return bcrypt.checkpw(pw.encode("utf-8"), pw_hash.encode("utf-8"))
+    except Exception:
+        return False
+
+
+# Ensure there is an initial admin user (and reset the password if requested)
 def _ensure_initial_admin():
+    desired_username = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
+    desired_password = os.getenv("DEFAULT_ADMIN_PASSWORD", "StrongPass!")
+    if not desired_password:
+        # Without a password we can't bootstrap access
+        return
+
     try:
         db = SessionLocal()
-        admin = db.query(User).filter(User.username == "admin").first()
+        admin = db.query(User).filter(User.username == desired_username).first()
+
+        new_password_hash = None
+
         if not admin:
-            # If absolutely no users, or missing 'admin' user, create it
+            new_password_hash = _hash_password(desired_password)
             admin = User(
-                username="admin",
+                username=desired_username,
                 is_admin=True,
-                password_hash=bcrypt.hashpw("StrongPass!".encode("utf-8"), bcrypt.gensalt()).decode("utf-8"),
+                password_hash=new_password_hash,
             )
             db.add(admin)
-            db.commit()
+        else:
+            updated = False
+            if not admin.is_admin:
+                admin.is_admin = True
+                updated = True
+            if not admin.password_hash or not _verify_password(desired_password, admin.password_hash):
+                if new_password_hash is None:
+                    new_password_hash = _hash_password(desired_password)
+                admin.password_hash = new_password_hash
+                updated = True
+            if updated:
+                db.add(admin)
+
+        db.commit()
     except Exception:
-        pass
+        try:
+            db.rollback()
+        except Exception:
+            pass
     finally:
         try:
             db.close()
         except Exception:
             pass
+
 
 _ensure_initial_admin()
 
@@ -88,20 +128,6 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-SESSION_COOKIE = "session"
-
-
-def _hash_password(pw: str) -> str:
-    return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-
-def _verify_password(pw: str, pw_hash: str) -> bool:
-    try:
-        return bcrypt.checkpw(pw.encode("utf-8"), pw_hash.encode("utf-8"))
-    except Exception:
-        return False
 
 
 def _issue_session(db: Session, user_id: int) -> str:
