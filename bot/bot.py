@@ -24,6 +24,13 @@ async def main():
         ])
         await message.answer("Добро пожаловать в Candy Store!", reply_markup=markup)
 
+    @dp.message(F.text == "/admin")
+    async def admin_cmd(message: types.Message):
+        markup = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Открыть админку", web_app=WebAppInfo(url=f"{WEBAPP_BASE_URL}/admin.html"))]
+        ])
+        await message.answer("Откройте админ-панель и введите пароль.", reply_markup=markup)
+
     @dp.message(F.web_app_data)
     async def handle_web_app_data(message: types.Message):
         try:
@@ -68,4 +75,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

@@ -1,21 +1,26 @@
 import os
 import shutil
 import sqlite3
-from fastapi import FastAPI, File, UploadFile, Form, Request, HTTPException, Depends, Body
+import uuid
+from datetime import datetime, timedelta
+
+from fastapi import FastAPI, File, UploadFile, Form, Request, HTTPException, Depends, Body, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from backend.database import SessionLocal, engine
-from backend.models import Base, Product, Order
-from bot.config import ADMIN_IDS
 
-# Создаём папки для статики при первом запуске
+from backend.database import SessionLocal, engine
+from backend.models import Base, Product, Order, User, Session as DbSession
+import bcrypt
+
+
+# Ensure upload directory exists
 os.makedirs("backend/static/uploads", exist_ok=True)
 
 Base.metadata.create_all(bind=engine)
 
-# Ensure new columns exist in existing SQLite DB (simple auto-migration)
+# Ensure legacy columns for orders exist (simple auto-migration)
 def _ensure_order_columns():
     try:
         db_path = engine.url.database
@@ -23,11 +28,7 @@ def _ensure_order_columns():
         cur = con.cursor()
         cur.execute("PRAGMA table_info(orders)")
         cols = [r[1] for r in cur.fetchall()]
-        additions = [
-            ("full_name", "TEXT"),
-            ("address", "TEXT"),
-            ("phone", "TEXT"),
-        ]
+        additions = [("full_name", "TEXT"), ("address", "TEXT"), ("phone", "TEXT")]
         changed = False
         for name, ddl in additions:
             if name not in cols:
@@ -43,6 +44,7 @@ def _ensure_order_columns():
         except Exception:
             pass
 
+
 _ensure_order_columns()
 
 app = FastAPI()
@@ -50,7 +52,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
 
 app.mount("/static", StaticFiles(directory="backend/static"), name="static")
@@ -64,17 +66,53 @@ def get_db():
         db.close()
 
 
+SESSION_COOKIE = "session"
+
+
+def _hash_password(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def _verify_password(pw: str, pw_hash: str) -> bool:
+    try:
+        return bcrypt.checkpw(pw.encode("utf-8"), pw_hash.encode("utf-8"))
+    except Exception:
+        return False
+
+
+def _issue_session(db: Session, user_id: int) -> str:
+    token = uuid.uuid4().hex
+    expires = datetime.utcnow() + timedelta(days=7)
+    sess = DbSession(user_id=user_id, token=token, expires_at=expires)
+    db.add(sess)
+    db.commit()
+    return token
+
+
+def _user_from_request(request: Request, db: Session):
+    token = request.cookies.get(SESSION_COOKIE)
+    if not token:
+        return None
+    sess = (
+        db.query(DbSession)
+        .filter(DbSession.token == token, DbSession.expires_at > datetime.utcnow())
+        .first()
+    )
+    if not sess:
+        return None
+    return db.query(User).filter(User.id == sess.user_id).first()
+
+
 @app.middleware("http")
 async def admin_check(request: Request, call_next):
-    """Проверка Telegram ID для админских маршрутов"""
     if request.url.path.startswith("/api/admin"):
-        user_id = request.headers.get("X-Telegram-Id")
+        db = SessionLocal()
         try:
-            uid = int(user_id) if user_id is not None else None
-        except (ValueError, TypeError):
-            uid = None
-        if uid is None or uid not in ADMIN_IDS:
-            return JSONResponse(status_code=403, content={"detail": "Access denied"})
+            user = _user_from_request(request, db)
+            if not user or not user.is_admin:
+                return JSONResponse(status_code=403, content={"detail": "Access denied"})
+        finally:
+            db.close()
     return await call_next(request)
 
 
@@ -91,7 +129,6 @@ async def upload_product(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    """Добавление товара"""
     path = f"backend/static/uploads/{file.filename}"
     with open(path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
@@ -100,7 +137,7 @@ async def upload_product(
         name=name,
         description=description,
         price=price,
-        image=f"/static/uploads/{file.filename}"
+        image=f"/static/uploads/{file.filename}",
     )
     db.add(product)
     db.commit()
@@ -110,13 +147,11 @@ async def upload_product(
 
 @app.get("/api/admin/orders")
 def get_orders(db: Session = Depends(get_db)):
-    """Список заказов"""
     return db.query(Order).order_by(Order.created_at.desc()).all()
 
 
 @app.post("/api/admin/orders/update_status")
 def update_status(order_id: int, status: str, db: Session = Depends(get_db)):
-    """Обновление статуса заказа"""
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -174,6 +209,74 @@ def create_order(
     db.commit()
     db.refresh(order)
     return {"status": "ok", "id": order.id}
+
+
+# --- Auth endpoints ---
+@app.post("/api/auth/login")
+def login(
+    response: Response,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+):
+    username = (payload.get("username") or "").strip()
+    password = payload.get("password") or ""
+    telegram_id = payload.get("telegram_id")
+
+    user = None
+    if telegram_id is not None:
+        try:
+            user = db.query(User).filter(User.telegram_id == int(telegram_id)).first()
+        except Exception:
+            user = None
+    elif username:
+        user = db.query(User).filter(User.username == username).first()
+    if not user:
+        # Bootstrap: create first admin by Telegram ID
+        total_users = db.query(User).count()
+        if telegram_id is not None and total_users == 0 and password:
+            user = User(telegram_id=int(telegram_id), is_admin=True, password_hash=_hash_password(password))
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        else:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not user.password_hash or not _verify_password(password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    token = _issue_session(db, user.id)
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        httponly=True,
+        secure=False,
+        samesite="Lax",
+        max_age=7 * 24 * 3600,
+        path="/",
+    )
+    return {"status": "ok", "is_admin": user.is_admin}
+
+
+@app.post("/api/auth/logout")
+def logout(response: Response):
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return {"status": "ok"}
+
+
+@app.get("/api/auth/me")
+def me(request: Request, db: Session = Depends(get_db)):
+    user = _user_from_request(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return {"id": user.id, "telegram_id": user.telegram_id, "username": user.username, "is_admin": user.is_admin}
+
+
+@app.get("/api/my/orders")
+def my_orders(request: Request, db: Session = Depends(get_db)):
+    user = _user_from_request(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
+
 
 # Mount the WebApp (frontend) at root LAST to avoid intercepting /api/* routes
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
