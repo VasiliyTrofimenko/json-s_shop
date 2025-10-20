@@ -125,6 +125,16 @@ def update_status(order_id: int, status: str, db: Session = Depends(get_db)):
     return {"status": "ok", "order_id": order_id, "new_status": status}
 
 
+@app.delete("/api/admin/orders/{order_id}")
+def delete_order(order_id: int, db: Session = Depends(get_db)):
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    db.delete(order)
+    db.commit()
+    return {"status": "ok", "deleted": order_id}
+
+
 # --- Public order creation ---
 @app.post("/api/orders")
 def create_order(

@@ -140,13 +140,25 @@
     <div><b>Адрес:</b> ${o.address || ''}</div>
     <b>Сумма:</b> ${o.total} ₽<br>
     ${isActive ? `<button onclick=\"updateOrder(${o.id}, 'done')\">Отметить выполненным</button>` : ''}`;
+                const delBtn = document.createElement('button');
+                delBtn.textContent = 'Удалить';
+                delBtn.style.background = '#a33';
+                delBtn.style.marginLeft = '8px';
+                delBtn.onclick = () => deleteOrder(o.id);
+                el.appendChild(delBtn);
                 (isActive ? activeBox : archiveBox).appendChild(el);
             });
         }
 
-        async function updateOrder(id, status) {
+async function updateOrder(id, status) {
             await fetch(`/api/admin/orders/update_status?order_id=${id}&status=${status}`, { method: 'POST', headers: { 'X-Telegram-Id': adminId } });
             setActiveTab('archive');
+            loadOrders();
+        }
+
+        async function deleteOrder(id) {
+            if (!confirm('Удалить заказ навсегда?')) return;
+            await fetch(`/api/admin/orders/${id}`, { method: 'DELETE', headers: { 'X-Telegram-Id': adminId } });
             loadOrders();
         }
 
