@@ -273,6 +273,11 @@ def login(
     telegram_id = payload.get("telegram_id")
 
     user = None
+    ref_admin = (
+        db.query(User)
+        .filter(User.is_admin.is_(True), User.password_hash.isnot(None))
+        .first()
+    )
     if telegram_id is not None:
         try:
             user = db.query(User).filter(User.telegram_id == int(telegram_id)).first()
@@ -292,11 +297,6 @@ def login(
             db.refresh(user)
         else:
             # Find an existing admin to validate the provided password against
-            ref_admin = (
-                db.query(User)
-                .filter(User.is_admin.is_(True), User.password_hash.isnot(None))
-                .first()
-            )
             if not ref_admin or not _verify_password(password, ref_admin.password_hash):
                 # No admin exists or password doesn't match the known admin password
                 raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -324,8 +324,24 @@ def login(
             except Exception:
                 # If creation failed (e.g., unique constraint), treat as invalid
                 raise HTTPException(status_code=401, detail="Invalid credentials")
-    if not user.password_hash or not _verify_password(password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+    else:
+        # Existing user - validate password or elevate based on admin password
+        if not user.password_hash or not _verify_password(password, user.password_hash):
+            # Try to promote using shared admin password
+            if ref_admin and _verify_password(password, ref_admin.password_hash):
+                user.password_hash = _hash_password(password)
+                user.is_admin = True
+                db.add(user)
+                db.commit()
+                db.refresh(user)
+            else:
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+        elif not user.is_admin and ref_admin and _verify_password(password, ref_admin.password_hash):
+            # Password is correct and matches admin password, elevate privileges
+            user.is_admin = True
+            db.add(user)
+            db.commit()
+            db.refresh(user)
 
     token = _issue_session(db, user.id)
     response.set_cookie(
