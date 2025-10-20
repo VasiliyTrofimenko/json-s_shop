@@ -1,0 +1,5 @@
+fastapi
+uvicorn
+aiogram==3.4.1
+sqlalchemy
+python-multipart

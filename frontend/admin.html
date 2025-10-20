@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Админ-панель</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <style>
+        :root { --bg:#fdf6f6; --card:#ffffff; --text:#111111; --muted:#666; --accent:#222; --accent-2:#555; --shadow:0 2px 10px rgba(0,0,0,.06); --radius:12px; --container:1280px; --border:#eee; --shimmer-1:#ecebeb; --shimmer-2:#f5f5f5; }
+        @media (prefers-color-scheme: dark){ :root{ --bg:#0f1115; --card:#161a20; --text:#f2f2f2; --muted:#a0a6ae; --accent:#2f6fed; --accent-2:#4665a3; --shadow:0 2px 18px rgba(0,0,0,.35); --border:#222831; --shimmer-1:#242a33; --shimmer-2:#1b2028; } }
+        :root[data-theme="dark"] { --bg:#0f1115; --card:#161a20; --text:#f2f2f2; --muted:#a0a6ae; --accent:#2f6fed; --accent-2:#4665a3; --shadow:0 2px 18px rgba(0,0,0,.35); --border:#222831; --shimmer-1:#242a33; --shimmer-2:#1b2028; }
+        :root[data-theme="light"] { --bg:#fdf6f6; --card:#ffffff; --text:#111111; --muted:#666; --accent:#222; --accent-2:#555; --shadow:0 2px 10px rgba(0,0,0,.06); --border:#eee; --shimmer-1:#ecebeb; --shimmer-2:#f5f5f5; }
+        * { box-sizing: border-box; }
+        body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 12px; padding-left: calc(env(safe-area-inset-left) + 12px); padding-right: calc(env(safe-area-inset-right) + 12px); }
+        .container { max-width: var(--container); margin: 0 auto; }
+        h2, h3 { margin: 8px 0 12px; }
+        .toolbar { display:flex; align-items:center; gap:8px; margin-bottom: 8px; flex-wrap: wrap; }
+        .toolbar h2 { white-space: nowrap; margin: 0; }
+        form { margin: 10px 0 16px; }
+        input, textarea { width: 100%; margin: 6px 0; padding: 10px; border: 1px solid var(--border); border-radius: 10px; font-size: 14px; background: var(--card); color: var(--text); }
+        button { background: var(--accent); color:#fff; padding: 12px 14px; border: none; border-radius: 10px; cursor: pointer; }
+        button.secondary { background: var(--accent-2); }
+        .tabs { display:flex; gap:8px; margin: 6px 0 10px; }
+        .tabs button { flex: 1; }
+        .lists { display: grid; gap: 10px; }
+        .orders-grid { display: grid; gap: 10px; grid-template-columns: 1fr; }
+        .order { background: var(--card); padding: 12px; border-radius: var(--radius); box-shadow: var(--shadow); opacity: 0; transform: translateY(6px); animation: fadeIn .25s ease-out forwards; }
+        .order b { font-weight: 600; }
+        .skeleton-card { background: var(--card); padding: 12px; border-radius: var(--radius); box-shadow: var(--shadow); }
+        .skeleton-line { height: 12px; border-radius: 8px; margin: 8px 0; background: var(--shimmer-1); position: relative; overflow: hidden; }
+        .skeleton-line.small { width: 30%; }
+        .skeleton-shimmer { position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, var(--shimmer-2), transparent); animation: shimmer 1.25s infinite; }
+        @media (min-width: 720px) { .orders-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); } }
+        @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
+        @keyframes shimmer { 100% { transform: translateX(100%); } }
+
+        /* Theme toggle */
+        .theme-toggle { margin-left:auto; background: transparent; color: var(--text); border: 1px solid var(--border); padding: 6px 10px; border-radius: 999px; font-size: 13px; cursor: pointer; backdrop-filter: blur(6px); }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="toolbar">
+            <h2 style="margin:0">Добавление товара</h2>
+            <button id="themeBtn" class="theme-toggle" title="Переключить тему"></button>
+        </div>
+        <form id="addForm">
+            <input type="text" name="name" placeholder="Название" required>
+            <textarea name="description" placeholder="Описание"></textarea>
+            <input type="number" name="price" placeholder="Цена" step="0.01" required>
+            <input type="file" name="file" accept="image/*" required>
+            <button type="submit">Добавить</button>
+        </form>
+
+        <h3>Заказы</h3>
+        <div class="tabs">
+            <button id="tab-active" onclick="setActiveTab('active')">Активные</button>
+            <button id="tab-archive" onclick="setActiveTab('archive')" class="secondary">Архив</button>
+        </div>
+        <div class="lists">
+            <div id="ordersActive" class="orders-grid"></div>
+            <div id="ordersArchive" class="orders-grid" style="display:none;"></div>
+        </div>
+    </div>
+
+    <script>
+        const tg = window.Telegram?.WebApp;
+        // Theme control with localStorage override
+        const themeBtn = document.getElementById('themeBtn');
+        const mq = window.matchMedia('(prefers-color-scheme: dark)');
+        function detectAutoTheme(){ const scheme = tg?.colorScheme; return scheme === 'dark' ? 'dark' : (mq.matches ? 'dark' : 'light'); }
+        function labelFor(mode){ return mode==='auto' ? `Тема: авто` : (mode==='dark' ? 'Тема: тёмная' : 'Тема: светлая'); }
+        function applyTheme(mode){
+            if (mode === 'auto') { const actual = detectAutoTheme(); if (actual==='dark') document.documentElement.setAttribute('data-theme','dark'); else document.documentElement.removeAttribute('data-theme'); }
+            else if (mode === 'dark') { document.documentElement.setAttribute('data-theme','dark'); }
+            else { document.documentElement.setAttribute('data-theme','light'); }
+            localStorage.setItem('theme', mode);
+            if (themeBtn) themeBtn.textContent = labelFor(mode);
+        }
+        function cycleTheme(){ const cur = localStorage.getItem('theme') || 'auto'; const next = cur==='auto' ? 'light' : (cur==='light' ? 'dark' : 'auto'); applyTheme(next); }
+        themeBtn?.addEventListener('click', cycleTheme);
+        tg?.onEvent?.('themeChanged', () => { if ((localStorage.getItem('theme')||'auto') === 'auto') applyTheme('auto'); });
+        mq.addEventListener?.('change', () => { if ((localStorage.getItem('theme')||'auto') === 'auto') applyTheme('auto'); });
+        applyTheme(localStorage.getItem('theme') || 'auto');
+
+        let adminId = tg?.initDataUnsafe?.user?.id;
+        if (!adminId) {
+            adminId = localStorage.getItem('adminId') || prompt('Введите ваш Telegram ID (для теста)');
+            if (adminId) localStorage.setItem('adminId', adminId);
+        }
+
+        let currentTab = 'active';
+        function setActiveTab(tab) {
+            currentTab = tab;
+            document.getElementById('ordersActive').style.display = (tab === 'active') ? 'grid' : 'none';
+            document.getElementById('ordersArchive').style.display = (tab === 'archive') ? 'grid' : 'none';
+            document.getElementById('tab-active').classList.toggle('secondary', tab !== 'active');
+            document.getElementById('tab-archive').classList.toggle('secondary', tab !== 'archive');
+        }
+        window.setActiveTab = setActiveTab;
+
+        function renderOrderSkeletons(targetId, n=4){
+            const box = document.getElementById(targetId);
+            box.innerHTML = '';
+            const frag = document.createDocumentFragment();
+            for(let i=0;i<n;i++){
+                const s = document.createElement('div');
+                s.className = 'skeleton-card';
+                s.innerHTML = `<div class="skeleton-line" style="width:60%"><div class="skeleton-shimmer"></div></div>
+                               <div class="skeleton-line" style="width:90%"><div class="skeleton-shimmer"></div></div>
+                               <div class="skeleton-line" style="width:80%"><div class="skeleton-shimmer"></div></div>
+                               <div class="skeleton-line small"><div class="skeleton-shimmer"></div></div>`;
+                frag.appendChild(s);
+            }
+            box.appendChild(frag);
+        }
+
+        async function loadOrders() {
+            // show skeletons while loading
+            renderOrderSkeletons('ordersActive');
+            renderOrderSkeletons('ordersArchive');
+            const res = await fetch('/api/admin/orders', { headers: { 'X-Telegram-Id': adminId } });
+            if (res.status === 403) { document.body.innerHTML = '<h3>Доступ запрещен</h3>'; return; }
+            const orders = await res.json();
+            const activeBox = document.getElementById('ordersActive');
+            const archiveBox = document.getElementById('ordersArchive');
+            activeBox.innerHTML = '';
+            archiveBox.innerHTML = '';
+
+            orders.forEach(o => {
+                const el = document.createElement('div');
+                el.className = 'order';
+                const isActive = (o.status === 'pending');
+                el.innerHTML = `<b>Заказ #${o.id}</b> — ${o.status} ${isActive ? '🟢' : '⚪'}<br>
+    <div><b>Товары (ids):</b> ${o.items}</div>
+    <div><b>Клиент:</b> ${o.full_name || ''}</div>
+    <div><b>Телефон:</b> ${o.phone || ''}</div>
+    <div><b>Адрес:</b> ${o.address || ''}</div>
+    <b>Сумма:</b> ${o.total} ₽<br>
+    ${isActive ? `<button onclick=\"updateOrder(${o.id}, 'done')\">Отметить выполненным</button>` : ''}`;
+                (isActive ? activeBox : archiveBox).appendChild(el);
+            });
+        }
+
+        async function updateOrder(id, status) {
+            await fetch(`/api/admin/orders/update_status?order_id=${id}&status=${status}`, { method: 'POST', headers: { 'X-Telegram-Id': adminId } });
+            setActiveTab('archive');
+            loadOrders();
+        }
+
+        document.getElementById('addForm').addEventListener('submit', async e => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const res = await fetch('/api/admin/upload', { method: 'POST', body: formData, headers: { 'X-Telegram-Id': adminId } });
+            if (res.status === 403) { alert('Доступ запрещен'); }
+            else if (res.ok) { alert('Товар добавлен!'); e.target.reset(); loadOrders(); }
+            else { alert('Ошибка при загрузке товара'); }
+        });
+
+        setActiveTab('active');
+        loadOrders();
+    </script>
+</body>
+
+</html>

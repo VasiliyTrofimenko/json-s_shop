@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Candy Store</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <style>
+        :root {
+            --bg: #fff7fa;
+            --card: #ffffff;
+            --text: #111111;
+            --muted: #666666;
+            --brand: #f071a8;
+            --shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --radius: 12px;
+            --container: 1280px;
+            --border: #eeeeee;
+            --shimmer-1: #ecebeb;
+            --shimmer-2: #f5f5f5;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #0f1115;
+                --card: #161a20;
+                --text: #f2f2f2;
+                --muted: #a0a6ae;
+                --brand: #f071a8;
+                --shadow: 0 2px 18px rgba(0,0,0,0.35);
+                --border: #222831;
+                --shimmer-1: #242a33;
+                --shimmer-2: #1b2028;
+            }
+        }
+        :root[data-theme="dark"] {
+            --bg: #0f1115;
+            --card: #161a20;
+            --text: #f2f2f2;
+            --muted: #a0a6ae;
+            --brand: #f071a8;
+            --shadow: 0 2px 18px rgba(0,0,0,0.35);
+            --border: #222831;
+            --shimmer-1: #242a33;
+            --shimmer-2: #1b2028;
+        }
+        /* Force light regardless of system */
+        :root[data-theme="light"] {
+            --bg: #fff7fa;
+            --card: #ffffff;
+            --text: #111111;
+            --muted: #666666;
+            --brand: #f071a8;
+            --shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --border: #eeeeee;
+            --shimmer-1: #ecebeb;
+            --shimmer-2: #f5f5f5;
+        }
+
+        * { box-sizing: border-box; }
+        body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 12px; padding-left: calc(env(safe-area-inset-left) + 12px); padding-right: calc(env(safe-area-inset-right) + 12px); }
+        .container { max-width: var(--container); margin: 0 auto; }
+        h2 { margin: 8px 0 16px; font-size: 22px; }
+        .toolbar { display:flex; align-items:center; gap:8px; margin-bottom: 8px; flex-wrap: wrap; }
+        .toolbar h2 { white-space: nowrap; margin: 0; }
+        #products { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+        .product { background: var(--card); padding: 12px; border-radius: var(--radius); box-shadow: var(--shadow); opacity: 0; transform: translateY(6px); animation: fadeIn .25s ease-out forwards; }
+        .product h3 { margin: 8px 0 6px; font-size: 16px; }
+        .product p { margin: 0 0 6px; color: var(--muted); font-size: 14px; }
+        img { width: 100%; border-radius: 10px; display: block; }
+        .product button { background: var(--brand); color: #fff; border: none; padding: 12px 16px; border-radius: 10px; margin-top: 8px; cursor: pointer; width: 100%; }
+        .product button:hover { filter: brightness(0.98); }
+
+        .skeleton-card { background: var(--card); padding: 12px; border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+        .skeleton-img, .skeleton-line { position: relative; background: var(--shimmer-1); border-radius: 10px; overflow: hidden; }
+        .skeleton-img { width: 100%; padding-top: 62%; margin-bottom: 10px; }
+        .skeleton-line { height: 12px; margin: 8px 0; }
+        .skeleton-line.small { width: 40%; height: 12px; }
+        .skeleton-shimmer { position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, var(--shimmer-2), transparent); animation: shimmer 1.25s infinite; }
+
+        .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: none; align-items: center; justify-content: center; padding: 16px; }
+        .modal.active { display: flex; }
+        .modal .card { background: var(--card); width: 100%; max-width: 560px; border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); }
+        .modal label { font-size: 13px; color: var(--muted); }
+        .modal input, .modal textarea { width: 100%; padding: 10px; margin: 6px 0 10px; border: 1px solid var(--border); background: var(--card); color: var(--text); border-radius: 10px; font-size: 14px; }
+        .row { display: flex; gap: 8px; }
+        .row > * { flex: 1; }
+
+        @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
+        @keyframes shimmer { 100% { transform: translateX(100%); } }
+
+        @media (max-width: 480px) { h2 { font-size: 20px; } .modal .card { padding: 14px; border-radius: 12px; } button { padding: 12px; } }
+        @media (min-width: 768px) { h2 { font-size: 24px; } .product h3 { font-size: 18px; } .product p { font-size: 15px; } }
+
+        .theme-toggle { margin-left:auto; background: transparent; color: var(--text); border: 1px solid var(--border); padding: 6px 10px; border-radius: 999px; font-size: 13px; cursor: pointer; backdrop-filter: blur(6px); }
+    </style>
+    <script>
+        try { window.Telegram?.WebApp?.expand(); } catch {}
+    </script>
+</head>
+
+<body>
+    <div class="container">
+        <div class="toolbar">
+            <h2>🍬 Candy Store</h2>
+            <button id="themeBtn" class="theme-toggle" title="Переключить тему"></button>
+        </div>
+        <div id="products"></div>
+    </div>
+
+    <div id="checkoutModal" class="modal">
+        <div class="card">
+            <h3>Оформление заказа</h3>
+            <form id="checkoutForm">
+                <input type="hidden" name="productId" id="productId">
+                <div class="row">
+                    <div style="flex:2">
+                        <label>ФИО</label>
+                        <input type="text" id="fullName" required>
+                    </div>
+                    <div style="flex:1">
+                        <label>Телефон</label>
+                        <input type="tel" id="phone" required>
+                    </div>
+                </div>
+                <label>Адрес</label>
+                <textarea id="address" rows="3" required></textarea>
+                <div style="display:flex; gap:8px; margin-top:8px;">
+                    <button type="submit">Подтвердить</button>
+                    <button type="button" onclick="closeModal()" style="background:#999">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Theme: auto/light/dark with localStorage override and Telegram support
+        const tg = window.Telegram?.WebApp;
+        const themeBtn = document.getElementById('themeBtn');
+        const mq = window.matchMedia('(prefers-color-scheme: dark)');
+        function detectAutoTheme(){ const scheme = tg?.colorScheme; return scheme === 'dark' ? 'dark' : (mq.matches ? 'dark' : 'light'); }
+        function labelFor(mode){ return mode==='auto' ? 'Тема: авто' : (mode==='dark' ? 'Тема: тёмная' : 'Тема: светлая'); }
+        function applyTheme(mode){
+            if (mode === 'auto') {
+                const actual = detectAutoTheme();
+                if (actual === 'dark') document.documentElement.setAttribute('data-theme','dark');
+                else document.documentElement.removeAttribute('data-theme'); // fall back to system light/dark
+            } else if (mode === 'dark') {
+                document.documentElement.setAttribute('data-theme','dark');
+            } else { // light
+                document.documentElement.setAttribute('data-theme','light');
+            }
+            localStorage.setItem('theme', mode);
+            if (themeBtn) themeBtn.textContent = labelFor(mode);
+        }
+        function cycleTheme(){ const cur = localStorage.getItem('theme') || 'auto'; const next = cur === 'auto' ? 'light' : (cur === 'light' ? 'dark' : 'auto'); applyTheme(next); }
+        themeBtn?.addEventListener('click', cycleTheme);
+        tg?.onEvent?.('themeChanged', () => { if ((localStorage.getItem('theme')||'auto') === 'auto') applyTheme('auto'); });
+        mq.addEventListener?.('change', () => { if ((localStorage.getItem('theme')||'auto') === 'auto') applyTheme('auto'); });
+        applyTheme(localStorage.getItem('theme') || 'auto');
+
+        const container = document.getElementById('products');
+        function renderSkeletons(n=6){
+            const frag = document.createDocumentFragment();
+            for(let i=0;i<n;i++){
+                const s = document.createElement('div');
+                s.className = 'skeleton-card';
+                s.innerHTML = `<div class="skeleton-img"><div class="skeleton-shimmer"></div></div>
+                               <div class="skeleton-line"></div>
+                               <div class="skeleton-line"></div>
+                               <div class="skeleton-line small"></div>`;
+                frag.appendChild(s);
+            }
+            container.appendChild(frag);
+        }
+        renderSkeletons();
+
+        fetch('/api/products')
+            .then(r => r.json())
+            .then(products => {
+                container.innerHTML = '';
+                products.forEach(p => {
+                    const el = document.createElement('div');
+                    el.className = 'product';
+                    el.innerHTML = `
+      <img src="${p.image}" alt="${p.name}">
+      <h3>${p.name}</h3>
+      <p>${p.description || ''}</p>
+      <b>${p.price} ₽</b><br>
+      <button onclick="openCheckout(${p.id})">Купить</button>`;
+                    container.appendChild(el);
+                });
+            })
+            .catch(() => { container.innerHTML = '<p>Ошибка загрузки товаров.</p>'; });
+
+        function openCheckout(productId) { document.getElementById('productId').value = String(productId); document.getElementById('checkoutModal').classList.add('active'); }
+        function closeModal() { document.getElementById('checkoutModal').classList.remove('active'); }
+
+        document.getElementById('checkoutForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const id = parseInt(document.getElementById('productId').value, 10);
+            const full_name = document.getElementById('fullName').value.trim();
+            const address = document.getElementById('address').value.trim();
+            const phone = document.getElementById('phone').value.trim();
+            const user_id = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
+            const res = await fetch('/api/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [id], full_name, address, phone, user_id }) });
+            if (res.ok) { closeModal(); try { tg?.HapticFeedback?.impactOccurred('soft'); } catch {} alert('Заказ оформлен!'); }
+            else { const data = await res.json().catch(() => ({})); alert('Ошибка: ' + (data.detail || res.status)); }
+        });
+    </script>
+</body>
+
+</html>
