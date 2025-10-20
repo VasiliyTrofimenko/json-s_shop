@@ -175,16 +175,16 @@ async function updateOrder(id, status) {
         loadOrders();
 
         function showLogin(){
-            const isTg = !!(window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user && window.Telegram.WebApp.initDataUnsafe.user.id);
             const wrapper = document.createElement('div');
             wrapper.id = 'loginModal';
             wrapper.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;padding:16px;';
+            const lastUsername = localStorage.getItem('adminUsername') || '';
             wrapper.innerHTML = `
                 <div style="background:var(--card);border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.2);padding:16px;max-width:420px;width:100%">
                     <h3>Вход администратора</h3>
-                    ${isTg ? '<p>Введите пароль администратора</p>' : '<p>Введите логин и пароль</p>'}
+                    <p>Введите логин и пароль администратора</p>
                     <div>
-                        ${isTg ? '' : '<input id="loginUsername" placeholder="Логин" style="width:100%;margin:6px 0;padding:10px;border:1px solid var(--border);border-radius:10px;">'}
+                        <input id="loginUsername" placeholder="Логин" value="${lastUsername}" style="width:100%;margin:6px 0;padding:10px;border:1px solid var(--border);border-radius:10px;">
                         <input id="loginPassword" type="password" placeholder="Пароль" style="width:100%;margin:6px 0;padding:10px;border:1px solid var(--border);border-radius:10px;">
                         <div style="display:flex;gap:8px;margin-top:8px;">
                             <button id="loginSubmit">Войти</button>
@@ -197,14 +197,16 @@ async function updateOrder(id, status) {
             document.getElementById('loginSubmit').onclick = async function(){
                 var pwInput = document.getElementById('loginPassword');
                 var password = pwInput && 'value' in pwInput ? pwInput.value : '';
-                const payload = { password: password };
-                if (isTg) { payload['telegram_id'] = window.Telegram.WebApp.initDataUnsafe.user.id; }
-                else {
-                    var uInput = document.getElementById('loginUsername');
-                    payload['username'] = uInput && 'value' in uInput ? uInput.value : '';
-                }
+                var uInput = document.getElementById('loginUsername');
+                var username = uInput && 'value' in uInput ? uInput.value : '';
+                if (!username) { alert('Укажите логин'); return; }
+                const payload = { username: username, password: password };
                 const r = await fetch('/api/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-                if (r.ok){ wrapper.remove(); loadOrders(); }
+                if (r.ok){
+                    localStorage.setItem('adminUsername', username);
+                    wrapper.remove();
+                    loadOrders();
+                }
                 else { alert('Неверные данные'); }
             };
         }
