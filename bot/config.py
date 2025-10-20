@@ -4,7 +4,7 @@ import os
 DB_PATH = "backend/candy_store.db"
 
 # Bot token is read from environment for safety. Set BOT_TOKEN before running the bot.
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8377179973:AAE1wC0k4ZwG_N2KPeH2R32HiPOwrnebrPw")
 
 # Public base URL where the WebApp (frontend) is hosted (HTTPS required for Telegram)
 WEBAPP_BASE_URL = os.getenv("WEBAPP_BASE_URL", "https://yourdomain.com")

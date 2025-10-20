@@ -20,6 +20,30 @@ os.makedirs("backend/static/uploads", exist_ok=True)
 
 Base.metadata.create_all(bind=engine)
 
+# Ensure there is an initial admin user
+def _ensure_initial_admin():
+    try:
+        db = SessionLocal()
+        admin = db.query(User).filter(User.username == "admin").first()
+        if not admin:
+            # If absolutely no users, or missing 'admin' user, create it
+            admin = User(
+                username="admin",
+                is_admin=True,
+                password_hash=bcrypt.hashpw("StrongPass!".encode("utf-8"), bcrypt.gensalt()).decode("utf-8"),
+            )
+            db.add(admin)
+            db.commit()
+    except Exception:
+        pass
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+_ensure_initial_admin()
+
 # Ensure legacy columns for orders exist (simple auto-migration)
 def _ensure_order_columns():
     try:
@@ -231,7 +255,9 @@ def login(
     elif username:
         user = db.query(User).filter(User.username == username).first()
     if not user:
-        # Bootstrap: create first admin by Telegram ID
+        # If no user found, handle two cases:
+        # 1) Bootstrap: create first admin by Telegram ID
+        # 2) Allow additional admins to log in by the same admin password
         total_users = db.query(User).count()
         if telegram_id is not None and total_users == 0 and password:
             user = User(telegram_id=int(telegram_id), is_admin=True, password_hash=_hash_password(password))
@@ -239,7 +265,39 @@ def login(
             db.commit()
             db.refresh(user)
         else:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
+            # Find an existing admin to validate the provided password against
+            ref_admin = (
+                db.query(User)
+                .filter(User.is_admin.is_(True), User.password_hash.isnot(None))
+                .first()
+            )
+            if not ref_admin or not _verify_password(password, ref_admin.password_hash):
+                # No admin exists or password doesn't match the known admin password
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+
+            # Password is valid (matches existing admin). Create a new admin user for this identity.
+            try:
+                if telegram_id is not None:
+                    user = User(
+                        telegram_id=int(telegram_id),
+                        is_admin=True,
+                        password_hash=_hash_password(password),
+                    )
+                elif username:
+                    user = User(
+                        username=username,
+                        is_admin=True,
+                        password_hash=_hash_password(password),
+                    )
+                else:
+                    # No identity to bind the account to
+                    raise HTTPException(status_code=401, detail="Invalid credentials")
+                db.add(user)
+                db.commit()
+                db.refresh(user)
+            except Exception:
+                # If creation failed (e.g., unique constraint), treat as invalid
+                raise HTTPException(status_code=401, detail="Invalid credentials")
     if not user.password_hash or not _verify_password(password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
@@ -276,6 +334,69 @@ def my_orders(request: Request, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
     return db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
+
+
+# --- User management (admin only) ---
+@app.get("/api/admin/users")
+def list_users(db: Session = Depends(get_db)):
+    users = db.query(User).order_by(User.created_at.desc()).all()
+    # Do not leak password hashes
+    return [
+        {
+            "id": u.id,
+            "telegram_id": u.telegram_id,
+            "username": u.username,
+            "is_admin": u.is_admin,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+        }
+        for u in users
+    ]
+
+
+@app.post("/api/admin/users")
+def create_user(payload: dict = Body(...), db: Session = Depends(get_db)):
+    username = (payload.get("username") or "").strip()
+    password = payload.get("password") or ""
+    is_admin = bool(payload.get("is_admin", False))
+    telegram_id = payload.get("telegram_id")
+
+    if not username and telegram_id is None:
+        raise HTTPException(status_code=422, detail="username or telegram_id required")
+    if not password:
+        raise HTTPException(status_code=422, detail="password required")
+
+    if username:
+        existing = db.query(User).filter(User.username == username).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="username already exists")
+    if telegram_id is not None:
+        try:
+            telegram_id = int(telegram_id)
+        except Exception:
+            raise HTTPException(status_code=422, detail="invalid telegram_id")
+        existing = db.query(User).filter(User.telegram_id == telegram_id).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="telegram_id already exists")
+
+    user = User(
+        username=username or None,
+        telegram_id=telegram_id,
+        is_admin=is_admin,
+        password_hash=_hash_password(password),
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return {
+        "status": "ok",
+        "user": {
+            "id": user.id,
+            "telegram_id": user.telegram_id,
+            "username": user.username,
+            "is_admin": user.is_admin,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+        },
+    }
 
 
 # Mount the WebApp (frontend) at root LAST to avoid intercepting /api/* routes
